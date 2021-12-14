@@ -1,0 +1,1111 @@
+CREATE OR REPLACE PROCEDURE IMPROD.Dsd_Inv_All_Hist_Sync ( In_Date_Offset IN NUMBER DEFAULT 0 )
+AS
+   Strsql                                 VARCHAR2 ( 15000 );
+   V_Ownname                              VARCHAR2 ( 100 ) := 'WORKSPACE';
+   V_Tabname                              VARCHAR2 ( 100 );
+   V_Indname                              VARCHAR2 ( 100 );
+   V_Partname                             VARCHAR2 ( 100 ) := NULL;
+   V_Estimate_Percent                     NUMBER := 100;
+   V_Block_Sample                         BOOLEAN := FALSE;
+   V_Method_Opt                           VARCHAR2 ( 100 )
+                                             := 'FOR ALL COLUMNS SIZE 1';
+   V_Degree                               NUMBER := 8;
+   V_Granularity                          VARCHAR2 ( 100 ) := 'DEFAULT';
+   V_Cascade                              BOOLEAN := TRUE;
+   V_Stattab                              VARCHAR2 ( 100 ) := NULL;
+   V_Statid                               VARCHAR2 ( 100 ) := NULL;
+   V_Statown                              VARCHAR2 ( 100 ) := NULL;
+   V_No_Invalidate                        BOOLEAN := FALSE;
+   Insert_Count                           NUMBER;
+   V_Alreadythere                         NUMBER; --1.0
+   Curr_Line                              VARCHAR2 ( 5000 );
+   Hold_Invoice                           VARCHAR2 ( 500 );
+   TYPE Refcursor IS REF CURSOR;
+
+
+   /*
+   ##############################################################################
+   #   BraveSoft Production Implementations:
+   #
+   # When    Who    Notes
+   # =========== ======== =================================================
+   # 10/08/2013  BST       Promoted to itemprod
+   # 02/07/2014  BST       Promoted to itemprod
+   # 03/19/2015  BST       Promoted to ITEMPROD per request 76380
+   # 06/02/2015 BST    Promoted to ITEMPROD per Request 76973
+   # 02/02/2021   WFS Schwein  Added check to stop duplicate insert to 18 month. 1.0.
+   ##############################################################################
+   
+   10-3-2021        WSchwein        1.0   Add step to fix UPC_ID in 18 mnth AFTER populated by this.  DSD has the UPC_ID, 18 month does not.  Go and get it and set in 18. 
+                                                WHY:  UPC_ID not in hist table.   UPC in HIST is from DSD.  For UNFI DSD uses a special process to get UPC_ID that this procedure doesn't have. 
+   10-19-2021       WSCHWEIN        2.0   Changed cursor (from 10-3 update) to include ALL vendors and records where the upc_id doesn't equal what DSD has, not just 0 values. 
+   */
+
+   Dsd_Csr                                Refcursor;
+   Dsd_Invoice                            Workspace.Dsd_Invoice_18_Mnth_History.Invoice%TYPE;
+   Dsd_Inv_Dlvry_Ret_Flag                 Workspace.Dsd_Invoice_18_Mnth_History.Inv_Dlvry_Ret_Flag%TYPE;
+   Dsd_Store                              Workspace.Dsd_Invoice_18_Mnth_History.Store%TYPE;
+   Dsd_Vendor                             Workspace.Dsd_Invoice_18_Mnth_History.Vendor%TYPE;
+   Dsd_Vendor_Name_Short                  Workspace.Dsd_Invoice_18_Mnth_History.Vendor_Name_Short%TYPE;
+   Dsd_Invoice_Date                       Workspace.Dsd_Invoice_18_Mnth_History.Invoice_Date%TYPE;
+   Dsd_Upc                                Workspace.Dsd_Invoice_18_Mnth_History.Upc%TYPE;
+   Dsd_Upc_Id                             Workspace.Dsd_Invoice_18_Mnth_History.Upc_Id%TYPE;
+   Dsd_Sequence_Number                    Workspace.Dsd_Invoice_18_Mnth_History.Sequence_Number%TYPE;
+   Dsd_Base_Qty                           Workspace.Dsd_Invoice_18_Mnth_History.Base_Qty%TYPE;
+   Dsd_Base_Cost                          Workspace.Dsd_Invoice_18_Mnth_History.Base_Cost%TYPE;
+   Dsd_Base_Price                         Workspace.Dsd_Invoice_18_Mnth_History.Base_Price%TYPE;
+   Dsd_Final_Cost                         Workspace.Dsd_Invoice_18_Mnth_History.Final_Cost%TYPE;
+   Dsd_Final_Price                        Workspace.Dsd_Invoice_18_Mnth_History.Final_Price%TYPE;
+   Dsd_Qty_Ret                            Workspace.Dsd_Invoice_18_Mnth_History.Qty_Ret%TYPE;
+   Dsd_Qty_Rec                            Workspace.Dsd_Invoice_18_Mnth_History.Qty_Rec%TYPE;
+   Dsd_Tot_Deposit                        Workspace.Dsd_Invoice_18_Mnth_History.Tot_Deposit%TYPE;
+   Dsd_Misc_Debit                         Workspace.Dsd_Invoice_18_Mnth_History.Misc_Debit%TYPE;
+   Dsd_Misc_Credit                        Workspace.Dsd_Invoice_18_Mnth_History.Misc_Credit%TYPE;
+   Dsd_Recvr_Id                           Workspace.Dsd_Invoice_18_Mnth_History.Recvr_Id%TYPE;
+   Dsd_Ap_Hold                            Workspace.Dsd_Invoice_18_Mnth_History.Ap_Hold%TYPE;
+   Dsd_Inv_Type                           Workspace.Dsd_Invoice_18_Mnth_History.Inv_Type%TYPE;
+   Dsd_Inv_Type_Descr                     Workspace.Dsd_Invoice_18_Mnth_History.Inv_Type_Descr%TYPE;
+   Dsd_Date_Recv                          Workspace.Dsd_Invoice_18_Mnth_History.Date_Recv%TYPE;
+   Dsd_Type_Inv                           Workspace.Dsd_Invoice_18_Mnth_History.Type_Inv%TYPE;
+   Dsd_Cod_Flag                           Workspace.Dsd_Invoice_18_Mnth_History.Cod_Flag%TYPE;
+   Dsd_Check_Number                       Workspace.Dsd_Invoice_18_Mnth_History.Check_Number%TYPE;
+   Dsd_Po_Number                          Workspace.Dsd_Invoice_18_Mnth_History.Po_Number%TYPE;
+   Dsd_Qty_Received                       Workspace.Dsd_Invoice_18_Mnth_History.Qty_Received%TYPE;
+   Dsd_Vendor_Cost                        Workspace.Dsd_Invoice_18_Mnth_History.Vendor_Cost%TYPE;
+   Dsd_Host_Cost                          Workspace.Dsd_Invoice_18_Mnth_History.Host_Cost%TYPE;
+   Dsd_Pay_Cost                           Workspace.Dsd_Invoice_18_Mnth_History.Pay_Cost%TYPE;
+   Dsd_Vendor_Allow                       Workspace.Dsd_Invoice_18_Mnth_History.Vendor_Allow%TYPE;
+   Dsd_Host_Allow                         Workspace.Dsd_Invoice_18_Mnth_History.Host_Allow%TYPE;
+   Dsd_Pay_Allow                          Workspace.Dsd_Invoice_18_Mnth_History.Pay_Allow%TYPE;
+   Dsd_Vendor_Allow2                      Workspace.Dsd_Invoice_18_Mnth_History.Vendor_Allow2%TYPE;
+   Dsd_Host_Allow2                        Workspace.Dsd_Invoice_18_Mnth_History.Host_Allow2%TYPE;
+   Dsd_Pay_Allow2                         Workspace.Dsd_Invoice_18_Mnth_History.Pay_Allow2%TYPE;
+   Dsd_Vendor_Qty                         Workspace.Dsd_Invoice_18_Mnth_History.Vendor_Qty%TYPE;
+   Dsd_Vendor_Retail                      Workspace.Dsd_Invoice_18_Mnth_History.Vendor_Retail%TYPE;
+   Dsd_Host_Qty                           Workspace.Dsd_Invoice_18_Mnth_History.Host_Qty%TYPE;
+   Dsd_Host_Retail                        Workspace.Dsd_Invoice_18_Mnth_History.Host_Retail%TYPE;
+   Dsd_Pay_Qty                            Workspace.Dsd_Invoice_18_Mnth_History.Pay_Qty%TYPE;
+   Dsd_Pay_Retail                         Workspace.Dsd_Invoice_18_Mnth_History.Pay_Retail%TYPE;
+   Dsd_Return_Flag                        Workspace.Dsd_Invoice_18_Mnth_History.Return_Flag%TYPE;
+   Dsd_Vend_Each_Flag                     Workspace.Dsd_Invoice_18_Mnth_History.Ven_Each_Flag%TYPE;
+   Dsd_Deposit                            Workspace.Dsd_Invoice_18_Mnth_History.Deposit%TYPE;
+   Dsd_Ven_Pack                           Workspace.Dsd_Invoice_18_Mnth_History.Ven_Pack%TYPE;
+   Dsd_Update_Id                          Workspace.Dsd_Invoice_18_Mnth_History.Update_Id%TYPE;
+   Dsd_Update_Date                        Workspace.Dsd_Invoice_18_Mnth_History.Update_Date%TYPE;
+   Dsd_Department                         Workspace.Dsd_Invoice_18_Mnth_History.Department%TYPE;
+   Dsd_Section                            Workspace.Dsd_Invoice_18_Mnth_History.Section%TYPE;
+   Dsd_Whse_Flag                          Workspace.Dsd_Invoice_18_Mnth_History.Whse_Flag%TYPE;
+   Dsd_Host_Pack                          Workspace.Dsd_Invoice_18_Mnth_History.Host_Pack%TYPE;
+   Dsd_Unauth_Flag                        Workspace.Dsd_Invoice_18_Mnth_History.Unauth_Flag%TYPE;
+   Dsd_Host_Vendor                        Workspace.Dsd_Invoice_18_Mnth_History.Host_Vendor%TYPE;
+   Dsd_Bottle_Surcharge                   Workspace.Dsd_Invoice_18_Mnth_History.Bottle_Surcharge%TYPE;
+   Dsd_Descrepancy_Flag                   Workspace.Dsd_Invoice_18_Mnth_History.Descrepancy_Flag%TYPE;
+   Dsd_Product_Description                Workspace.Dsd_Invoice_18_Mnth_History.Product_Description%TYPE;
+   Dsd_Account                            Workspace.Dsd_Invoice_18_Mnth_History.Account%TYPE;
+   Dsd_Qty_Diff                           Workspace.Dsd_Invoice_18_Mnth_History.Qty_Diff%TYPE;
+   Dsd_Net_Cost_Paid                      Workspace.Dsd_Invoice_18_Mnth_History.Net_Cost_Paid%TYPE;
+   Dsd_Total_Amount_Paid                  Workspace.Dsd_Invoice_18_Mnth_History.Total_Amount_Paid%TYPE;
+   Dsd_Smi_Net_Cost                       Workspace.Dsd_Invoice_18_Mnth_History.Smi_Net_Cost%TYPE;
+   Dsd_Vendor_Net_Cost                    Workspace.Dsd_Invoice_18_Mnth_History.Vendor_Net_Cost%TYPE;
+   Dsd_Net_Cost_Variance                  Workspace.Dsd_Invoice_18_Mnth_History.Net_Cost_Variance%TYPE;
+   Dsd_Cost_Diff                          Workspace.Dsd_Invoice_18_Mnth_History.Cost_Diff%TYPE;
+   Dsd_Total_Retail                       Workspace.Dsd_Invoice_18_Mnth_History.Total_Retail%TYPE;
+   Dsd_Receiving_Gp_Pct                   Workspace.Dsd_Invoice_18_Mnth_History.Receiving_Gp_Pct%TYPE;
+   Dsd_File_Process_Date                  Workspace.Dsd_Invoice_18_Mnth_History.File_Process_Date%TYPE;
+   Sql_String                             VARCHAR2 ( 5000 );
+   v_counter                              number;                           --1.0 
+
+   Partition01_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -18 ), 'YYYYMM' );
+   Partition02_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -17 ), 'YYYYMM' );
+   Partition03_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -16 ), 'YYYYMM' );
+   Partition04_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -15 ), 'YYYYMM' );
+   Partition05_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -14 ), 'YYYYMM' );
+   Partition06_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -13 ), 'YYYYMM' );
+   Partition07_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -12 ), 'YYYYMM' );
+   Partition08_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -11 ), 'YYYYMM' );
+   Partition09_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -10 ), 'YYYYMM' );
+   Partition10_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -09 ), 'YYYYMM' );
+   Partition11_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -08 ), 'YYYYMM' );
+   Partition12_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -07 ), 'YYYYMM' );
+   Partition13_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -06 ), 'YYYYMM' );
+   Partition14_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -05 ), 'YYYYMM' );
+   Partition15_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -04 ), 'YYYYMM' );
+   Partition16_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -03 ), 'YYYYMM' );
+   Partition17_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -02 ), 'YYYYMM' );
+   Partition18_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), -01 ), 'YYYYMM' );
+   Partition19_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), 0 ), 'YYYYMM' );
+   Partition20_Name                       VARCHAR2 ( 7 )
+      := 'P' || TO_CHAR ( ADD_MONTHS ( TRUNC ( SYSDATE ), 1 ), 'YYYYMM' );
+   Partition01_Count                      NUMBER := 0;
+   Partition02_Count                      NUMBER := 0;
+   Partition03_Count                      NUMBER := 0;
+   Partition04_Count                      NUMBER := 0;
+   Partition05_Count                      NUMBER := 0;
+   Partition06_Count                      NUMBER := 0;
+   Partition07_Count                      NUMBER := 0;
+   Partition08_Count                      NUMBER := 0;
+   Partition09_Count                      NUMBER := 0;
+   Partition10_Count                      NUMBER := 0;
+   Partition11_Count                      NUMBER := 0;
+   Partition12_Count                      NUMBER := 0;
+   Partition13_Count                      NUMBER := 0;
+   Partition14_Count                      NUMBER := 0;
+   Partition15_Count                      NUMBER := 0;
+   Partition16_Count                      NUMBER := 0;
+   Partition17_Count                      NUMBER := 0;
+   Partition18_Count                      NUMBER := 0;
+   Partition19_Count                      NUMBER := 0;
+   Partition20_Count                      NUMBER := 0;
+   /**************************************************************************/
+   PROCEDURE Main
+   IS
+   /**************************************************************************/
+   BEGIN
+      NULL;
+   END;
+   /**************************************************************************/
+   PROCEDURE Display_Input_Record
+   IS
+   /**************************************************************************/
+   BEGIN
+      Improd.Dbg.Disp ( 49, 'Dsd_Invoice:' || Dsd_Invoice );
+      Improd.Dbg.Disp ( 49, 'Dsd_Inv_Dlvry_Ret_Flag:' || Dsd_Inv_Dlvry_Ret_Flag );
+      Improd.Dbg.Disp ( 49, 'Dsd_Store:' || Dsd_Store );
+      Improd.Dbg.Disp ( 49, 'Dsd_Vendor:' || Dsd_Vendor );
+   --      Improd.Dbg.Disp ( 49,'Dsd_Vendor_Name_Short:' || Dsd_Vendor_Name_Short );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Invoice_Date:' || Dsd_Invoice_Date );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Upc:' || Dsd_Upc );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Upc_Id:' || Dsd_Upc_Id );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Sequence_Number:' || Dsd_Sequence_Number );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Base_Qty:' || Dsd_Base_Qty );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Base_Cost:' || Dsd_Base_Cost );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Base_Price:' || Dsd_Base_Price );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Final_Cost:' || Dsd_Final_Cost );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Final_Price:' || Dsd_Final_Price );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Qty_Ret:' || Dsd_Qty_Ret );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Qty_Rec:' || Dsd_Qty_Rec );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Tot_Deposit:' || Dsd_Tot_Deposit );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Misc_Debit:' || Dsd_Misc_Debit );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Misc_Credit:' || Dsd_Misc_Credit );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Recvr_Id:' || Dsd_Recvr_Id );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Ap_Hold:' || Dsd_Ap_Hold );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Inv_Type:' || Dsd_Inv_Type );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Inv_Type_Descr:' || Dsd_Inv_Type_Descr );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Date_Recv:' || Dsd_Date_Recv );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Type_Inv:' || Dsd_Type_Inv );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Cod_Flag:' || Dsd_Cod_Flag );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Check_Number:' || Dsd_Check_Number );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Po_Number:' || Dsd_Po_Number );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Qty_Received:' || Dsd_Qty_Received );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Vendor_Cost:' || Dsd_Vendor_Cost );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Host_Cost:' || Dsd_Host_Cost );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Pay_Cost:' || Dsd_Pay_Cost );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Vendor_Allow:' || Dsd_Vendor_Allow );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Host_Allow:' || Dsd_Host_Allow );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Pay_Allow:' || Dsd_Pay_Allow );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Vendor_Allow2:' || Dsd_Vendor_Allow2 );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Host_Allow2:' || Dsd_Host_Allow2 );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Pay_Allow2:' || Dsd_Pay_Allow2 );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Vendor_Qty:' || Dsd_Vendor_Qty );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Vendor_Retail:' || Dsd_Vendor_Retail );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Host_Qty:' || Dsd_Host_Qty );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Host_Retail:' || Dsd_Host_Retail );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Pay_Qty:' || Dsd_Pay_Qty );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Pay_Retail:' || Dsd_Pay_Retail );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Return_Flag:' || Dsd_Return_Flag );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Vend_Each_Flag:' || Dsd_Vend_Each_Flag );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Deposit:' || Dsd_Deposit );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Ven_Pack:' || Dsd_Ven_Pack );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Update_Id:' || Dsd_Update_Id );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Update_Date:' || Dsd_Update_Date );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Department:' || Dsd_Department );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Section:' || Dsd_Section );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Whse_Flag:' || Dsd_Whse_Flag );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Host_Pack:' || Dsd_Host_Pack );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Unauth_Flag:' || Dsd_Unauth_Flag );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Host_Vendor:' || Dsd_Host_Vendor );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Bottle_Surcharge:' || Dsd_Bottle_Surcharge );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Descrepancy_Flag:' || Dsd_Descrepancy_Flag );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Product_Description:' || Dsd_Product_Description );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Account:' || Dsd_Account );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Qty_Diff:' || Dsd_Qty_Diff );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Net_Cost_Paid:' || Dsd_Net_Cost_Paid );
+   --      Improd.Dbg.Disp ( 49,'Dsd_Total_Amount_Paid:' || Dsd_Total_Amount_Paid );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Smi_Net_Cost:' || Dsd_Smi_Net_Cost );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Vendor_Net_Cost:' || Dsd_Vendor_Net_Cost );
+   --      Improd.Dbg.Disp ( 49,'Dsd_Net_Cost_Variance:' || Dsd_Net_Cost_Variance );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Cost_Diff:' || Dsd_Cost_Diff );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Total_Retail:' || Dsd_Total_Retail );
+   --      Improd.Dbg.Disp ( 49, 'Dsd_Receiving_Gp_Pct:' || Dsd_Receiving_Gp_Pct );
+   --      Improd.Dbg.Disp ( 49,'Dsd_File_Process_Date:' || Dsd_File_Process_Date );
+   END;
+/**************************************************************************/
+ PROCEDURE FixUPC_ID_For_UNFI_In_18_Month    --Change 1.0  Added 10/2/2021
+ IS
+ 
+ BEGIN
+        v_counter  := 0;  --Debug counter only. 
+        FOR X in (
+        select WRK.*,
+               DSD.upc_id correct_upc_id
+        from workspace.dsd_invoice_18_mnth_history WRK
+        inner join
+        (select hdr.store,
+                hdr.invoice_date,
+                hdr.invoice_nbr,
+                dtl.invoice_upc,
+                dtl.upc_id,
+                dtl.invoice_line
+           from improd.sm_dsd_invoice_hdr HDR
+           left join improd.sm_dsd_invoice_dtl DTL on hdr.sm_dsd_invoice_hdr_id = dtl.sm_dsd_invoice_hdr_id
+           left join sysadm.ps_vendor psv on hdr.vendor = psv.vendor_id
+          where hdr.create_date > sysdate-20) DSD on trim(wrk.invoice) = DSD.invoice_nbr
+                                                 and trim(wrk.store) = dsd.store
+                                                 and wrk.invoice_date = dsd.invoice_date
+                                                 and wrk.upc = dsd.invoice_upc
+                                                 and wrk.sequence_number = dsd.invoice_line
+        where wrk.file_process_date > trunc(sysdate-7) and wrk.upc_id <> dsd.upc_id and nvl(dsd.upc_id,0) <> 0   --2.0
+        )
+    LOOP
+      BEGIN
+        UPDATE workspace.dsd_invoice_18_mnth_history
+           SET upc_id = x.correct_upc_id,
+               update_date = sysdate,
+               update_id = 'UPCIDFIX'
+         WHERE  store = x.store
+           AND vendor = x.vendor
+           and sequence_number = x.sequence_number
+           and upc = x.UPC
+           and Trim(invoice) = trim(x.invoice)
+           AND invoice_date = x.invoice_Date;
+        v_counter := v_Counter + 1;
+      EXCEPTION
+         WHEN NO_DATA_FOUND THEN RAISE;
+         WHEN OTHERS THEN RAISE;
+      END;      
+            --DBMS_OUTPUT.PUT_LINE ('counter: ' || v_counter);
+    END LOOP;
+    COMMIT;
+ END; 
+/**************************************************************************/
+BEGIN
+   Improd.Dbg.Disp ( 99, 'Beginning Dsd_Inv_All_Hist_Sync' );
+   Curr_Line := '0001';
+   Strsql := 'WITH Item_Maint_Tbl ';
+   Curr_Line := '0002';
+   Strsql := Strsql || 'AS (SELECT X.Upc_Id ';
+   Curr_Line := '0003';
+   Strsql := Strsql || ',X.Upc ';
+   Curr_Line := '0004';
+   Strsql := Strsql || ',Amv.SECTION ';
+   Curr_Line := '0005';
+   Strsql := Strsql || ',Ud.Product_Description ';
+   Curr_Line := '0006';
+   Strsql := Strsql || ',Amv.Major_Account || ';
+   Curr_Line := '0007';
+   Strsql :=
+      Strsql || 'LPAD( LTRIM( RTRIM( Amv.Minor_Account ) ), 2, ''0'' ) ';
+   Curr_Line := '0008';
+   Strsql := Strsql || 'ACCOUNT ';
+   Curr_Line := '0009';
+   Strsql := Strsql || 'FROM (SELECT Upc_Id ';
+   Curr_Line := '0010';
+   Strsql := Strsql || ',Upc ';
+   Curr_Line := '0011';
+   Strsql := Strsql || 'FROM Improd.Upc_Id_Xref/*@Itemprodselect_Link*/ ';
+   Curr_Line := '0012';
+   Strsql := Strsql || 'UNION ALL ';
+   Curr_Line := '0013';
+   Strsql := Strsql || 'SELECT Upc_Id ';
+   Curr_Line := '0014';
+   Strsql := Strsql || ',Alternate_Upc ';
+   Curr_Line := '0015';
+   Strsql :=
+      Strsql || 'FROM Improd.Primary_Alt_Xref/*@Itemprodselect_Link*/) X ';
+   Curr_Line := '0016';
+   Strsql :=
+      Strsql || ',Improd.Upc_Id_Attributes/*@Itemprodselect_Link*/ Amv ';
+   Curr_Line := '0017';
+   Strsql :=
+      Strsql || ',Improd.Upc_Id_Descriptions/*@Itemprodselect_Link*/ Ud ';
+   Curr_Line := '0018';
+   Strsql := Strsql || 'WHERE X.Upc_Id = Ud.Upc_Id AND ';
+   Curr_Line := '0019';
+   Strsql := Strsql || 'Ud.Upc_Id = Amv.Upc_Id) ';
+   Curr_Line := '0020';
+   Strsql :=
+      Strsql ||
+      'SELECT  DECODE( D.Update_Id, ''TRANSCPT'', RTRIM(H.Invoice), RTRIM(SUBSTR( H.Invoice, 2 ))) Invoice ';
+   Curr_Line := '0021';
+   Strsql := Strsql || ',DECODE( D.Update_Id ';
+   Curr_Line := '0022';
+   Strsql := Strsql || ',''TRANSCPT'', CASE ';
+   Curr_Line := '0023';
+   Strsql := Strsql || 'WHEN Qty_Received < 0 ';
+   Curr_Line := '0024';
+   Strsql := Strsql || 'THEN ';
+   Curr_Line := '0025';
+   Strsql := Strsql || '''R'' ';
+   Curr_Line := '0026';
+   Strsql := Strsql || 'ELSE ';
+   Curr_Line := '0027';
+   Strsql := Strsql || '''D'' ';
+   Curr_Line := '0028';
+   Strsql := Strsql || 'END ';
+   Curr_Line := '0029';
+   Strsql := Strsql || ',SUBSTR( H.Invoice, 1,1 ) )     ';
+   Curr_Line := '0030';
+   Strsql := Strsql || 'Inv_Dlvry_Ret_Flag ';
+   Curr_Line := '0031';
+   Strsql := Strsql || ',H.STORE ';
+   Curr_Line := '0032';
+   Strsql := Strsql || ',H.Vendor ';
+   Curr_Line := '0033';
+   Strsql := Strsql || ',P.Name1 ';
+   Curr_Line := '0034';
+   Strsql := Strsql || ',H.Invoice_Date ';
+   Curr_Line := '0035';
+   Strsql := Strsql || ',D.Upc ';
+   Curr_Line := '0036';
+   Strsql := Strsql || ',NVL( Item_Maint_Tbl.Upc_Id, 0 ) Upc_Id ';
+   Curr_Line := '0037';
+   Strsql := Strsql || ',D.Sequence_Number ';
+   Curr_Line := '0038';
+   Strsql := Strsql || ',H.Base_Qty ';
+   Curr_Line := '0039';
+   Strsql := Strsql || ',H.Base_Cost ';
+   Curr_Line := '0040';
+   Strsql := Strsql || ',H.Base_Price ';
+   Curr_Line := '0041';
+   Strsql := Strsql || ',H.Final_Cost ';
+   Curr_Line := '0042';
+   Strsql := Strsql || ',H.Final_Price ';
+   Curr_Line := '0043';
+   Strsql := Strsql || ',H.Qty_Ret ';
+   Curr_Line := '0044';
+   Strsql := Strsql || ',H.Qty_Rec ';
+   Curr_Line := '0045';
+   Strsql := Strsql || ',H.Tot_Deposit ';
+   Curr_Line := '0046';
+   Strsql := Strsql || ',H.Misc_Debit ';
+   Curr_Line := '0047';
+   Strsql := Strsql || ',H.Misc_Credit ';
+   Curr_Line := '0048';
+   Strsql := Strsql || ',H.Recvr_Id ';
+   Curr_Line := '0049';
+   Strsql := Strsql || ',H.Ap_Hold ';
+   Curr_Line := '0050';
+   Strsql := Strsql || ',H.Inv_Type ';
+   Curr_Line := '0051';
+   Strsql := Strsql || ',DECODE( Rt.Ct2020_Description_New ';
+   Curr_Line := '0052';
+   Strsql := Strsql || ',NULL, Rt.Chaintrack_Description_Old ';
+   Curr_Line := '0053';
+   Strsql := Strsql || ',Rt.Ct2020_Description_New ) ';
+   Curr_Line := '0054';
+   Strsql := Strsql || 'Inv_Type_Descr ';
+   Curr_Line := '0055';
+   Strsql := Strsql || ',H.Date_Recv ';
+   Curr_Line := '0056';
+   Strsql := Strsql || ',H.Type_Inv ';
+   Curr_Line := '0057';
+   Strsql := Strsql || ',H.Cod_Flag ';
+   Curr_Line := '0058';
+   Strsql := Strsql || ',H.Check_Number ';
+   Curr_Line := '0059';
+   Strsql := Strsql || ',H.Po_Number ';
+   Curr_Line := '0060';
+   Strsql := Strsql || ',D.Qty_Received ';
+   Curr_Line := '0061';
+   Strsql := Strsql || ',D.Vendor_Cost ';
+   Curr_Line := '0062';
+   Strsql := Strsql || ',D.Host_Cost ';
+   Curr_Line := '0063';
+   Strsql := Strsql || ',D.Pay_Cost ';
+   Curr_Line := '0064';
+   Strsql := Strsql || ',D.Vendor_Allow ';
+   Curr_Line := '0065';
+   Strsql := Strsql || ',D.Host_Allow ';
+   Curr_Line := '0066';
+   Strsql := Strsql || ',D.Pay_Allow ';
+   Curr_Line := '0067';
+   Strsql := Strsql || ',D.Vendor_Allow2 ';
+   Curr_Line := '0068';
+   Strsql := Strsql || ',D.Host_Allow2 ';
+   Curr_Line := '0069';
+   Strsql := Strsql || ',D.Pay_Allow2 ';
+   Curr_Line := '0070';
+   Strsql := Strsql || ',D.Vendor_Qty ';
+   Curr_Line := '0071';
+   Strsql := Strsql || ',D.Vendor_Retail ';
+   Curr_Line := '0072';
+   Strsql := Strsql || ',NVL(D.Host_Qty,0) ';
+   Curr_Line := '0073';
+   Strsql := Strsql || ',D.Host_Retail ';
+   Curr_Line := '0074';
+   Strsql := Strsql || ',D.Pay_Qty ';
+   Curr_Line := '0075';
+   Strsql := Strsql || ',D.Pay_Retail ';
+   Curr_Line := '0076';
+   Strsql := Strsql || ',D.Return_Flag ';
+   Curr_Line := '0077';
+   Strsql := Strsql || ',D.Ven_Each_Flag ';
+   Curr_Line := '0078';
+   Strsql := Strsql || ',D.Deposit ';
+   Curr_Line := '0079';
+   Strsql := Strsql || ',D.Ven_Pack ';
+   Curr_Line := '0080';
+   Strsql := Strsql || ',D.Update_Id ';
+   Curr_Line := '0081';
+   Strsql := Strsql || ',D.Update_Date ';
+   Curr_Line := '0082';
+   Strsql := Strsql || ',D.Department ';
+   Curr_Line := '0083';
+   Strsql :=
+      Strsql ||
+      ',DECODE( D.SECTION, NULL, Item_Maint_Tbl.SECTION, D.SECTION ) SECTION ';
+   Curr_Line := '0084';
+   Strsql := Strsql || ',D.Whse_Flag ';
+   Curr_Line := '0085';
+   Strsql := Strsql || ',D.Host_Pack ';
+   Curr_Line := '0086';
+   Strsql := Strsql || ',D.Unauth_Flag ';
+   Curr_Line := '0087';
+   Strsql := Strsql || ',D.Host_Vendor ';
+   Curr_Line := '0088';
+   Strsql := Strsql || ',D.Bottle_Surcharge ';
+   Curr_Line := '0089';
+   Strsql := Strsql || ',D.Descrepancy_Flag ';
+   Curr_Line := '0090';
+   Strsql :=
+      Strsql ||
+      ',NVL( Item_Maint_Tbl.Product_Description, ''DISCONTINUED ITEM'' ) ';
+   Curr_Line := '0091';
+   Strsql := Strsql || 'Product_Description ';
+   Curr_Line := '0092';
+   Strsql := Strsql || ',NVL( Item_Maint_Tbl.ACCOUNT, ''00000'' ) ACCOUNT ';
+   Curr_Line := '0093';
+   Strsql :=
+      Strsql ||
+      ',( NVL( Vendor_Qty, 0 ) - NVL( Qty_Received, 0 ) ) Qty_Diff ';
+   Curr_Line := '0094';
+   Strsql :=
+      Strsql ||
+      ',( NVL( Pay_Cost, 0 ) - NVL( Pay_Allow, 0 ) - NVL( Pay_Allow2, 0 ) ) ';
+   Curr_Line := '0095';
+   Strsql := Strsql || 'Net_Cost_Paid ';
+   Curr_Line := '0096';
+   Strsql :=
+      Strsql ||
+      ',( NVL( Qty_Received, 0 ) * ( NVL( Pay_Cost, 0 ) - NVL( Pay_Allow, 0 ) ';
+   Curr_Line := '0097';
+   Strsql := Strsql || '- NVL( Pay_Allow2, 0 ) ) ) ';
+   Curr_Line := '0098';
+   Strsql := Strsql || 'Total_Amount_Paid ';
+   Curr_Line := '0099';
+   Strsql :=
+      Strsql ||
+      ',( NVL( Host_Cost, 0 ) - NVL( Host_Allow, 0 ) ) Smi_Net_Cost ';
+   Curr_Line := '0100';
+   Strsql :=
+      Strsql ||
+      ',( NVL( Vendor_Cost, 0 ) - NVL( Vendor_Allow, 0 ) ) Vendor_Net_Cost ';
+   Curr_Line := '0101';
+   Strsql :=
+      Strsql ||
+      ',( NVL( Host_Cost, 0 ) - NVL( Host_Allow, 0 ) ) - ( NVL( Vendor_Cost ';
+   Curr_Line := '0102';
+   Strsql := Strsql || ',0 ) - NVL( ';
+   Curr_Line := '0103';
+   Strsql := Strsql || 'Vendor_Allow ';
+   Curr_Line := '0104';
+   Strsql := Strsql || ',0 ) ';
+   Curr_Line := '0105';
+   Strsql := Strsql || ') ';
+   Curr_Line := '0106';
+   Strsql := Strsql || 'Net_Cost_Variance ';
+   Curr_Line := '0107';
+   Strsql :=
+      Strsql ||
+      ',( ( NVL( Host_Cost, 0 ) - NVL( Host_Allow, 0 ) ) - ( NVL( Vendor_Cost ';
+   Curr_Line := '0108';
+   Strsql := Strsql || ',0 ) - NVL( ';
+   Curr_Line := '0109';
+   Strsql := Strsql || 'Vendor_Allow ';
+   Curr_Line := '0110';
+   Strsql := Strsql || ', ';
+   Curr_Line := '0111';
+   Strsql := Strsql || '0 ) ) ) ';
+   Curr_Line := '0112';
+   Strsql := Strsql || 'Cost_Diff ';
+   Curr_Line := '0114';
+   Strsql := Strsql || ',CASE ';
+   Curr_Line := '0115';
+   Strsql := Strsql || 'WHEN CASE ';
+   Curr_Line := '0116';
+   Strsql := Strsql || 'WHEN NVL ( Host_Qty, 0 ) = 0 ';
+   Curr_Line := '0117';
+   Strsql := Strsql || 'THEN ';
+   Curr_Line := '0118';
+   Strsql := Strsql || '0 ';
+   Curr_Line := '0119';
+   Strsql := Strsql || 'ELSE ';
+   Curr_Line := '0120';
+   Strsql := Strsql || 'DECODE ';
+   Curr_Line := '0121';
+   Strsql := Strsql || '( ';
+   Curr_Line := '0121.01';
+   Strsql := Strsql || 'Ven_Each_Flag ';
+   Curr_Line := '0121.02';
+   Strsql :=
+      Strsql || ',''E'', ( Qty_Received * ( Host_Retail / Host_Qty ) )  ';
+   Curr_Line := '0121.03';
+   Strsql := Strsql || ',Qty_Received * ( Host_Pack * ( Host_Retail / ';
+   Curr_Line := '0121.04';
+   Strsql := Strsql || 'Host_Qty ) ) ';
+   Curr_Line := '0121.05';
+   Strsql := Strsql || ') ';
+   Curr_Line := '0121.06';
+   Strsql := Strsql || 'END > 999999.9999 ';
+   Curr_Line := '0121.07';
+   Strsql := Strsql || 'THEN ';
+   Curr_Line := '0121.08';
+   Strsql := Strsql || '999999.9999 ';
+   Curr_Line := '0121.09';
+   Strsql := Strsql || 'ELSE ';
+   Curr_Line := '0121.10';
+   Strsql := Strsql || 'CASE ';
+   Curr_Line := '0121.11';
+   Strsql := Strsql || 'WHEN NVL ( Host_Qty, 0 ) = 0 ';
+   Curr_Line := '0121.12';
+   Strsql := Strsql || 'THEN ';
+   Curr_Line := '0121.13';
+   Strsql := Strsql || '0 ';
+   Curr_Line := '0121.14';
+   Strsql := Strsql || 'ELSE ';
+   Curr_Line := '0121.15';
+   Strsql := Strsql || 'DECODE ';
+   Curr_Line := '0121.16';
+   Strsql := Strsql || '( ';
+   Curr_Line := '0121.17';
+   Strsql := Strsql || 'Ven_Each_Flag ';
+   Curr_Line := '0121.18';
+   Strsql :=
+      Strsql || ',''E'', ( Qty_Received * ( Host_Retail / Host_Qty ) ) ';
+   Curr_Line := '0121.19';
+   Strsql := Strsql || ',Qty_Received * ( Host_Pack * ( Host_Retail / ';
+   Curr_Line := '0121.20';
+   Strsql := Strsql || 'Host_Qty ) ) ';
+   Curr_Line := '0121.21';
+   Strsql := Strsql || ') ';
+   Curr_Line := '0121.22';
+   Strsql := Strsql || 'END ';
+   Curr_Line := '0121.23';
+   Strsql := Strsql || 'END ';
+   Curr_Line := '0121.24';
+   Strsql := Strsql || 'Total_Retail ';
+   Curr_Line := '0122';
+   Strsql := Strsql || ',CASE ';
+   Curr_Line := '0123';
+   Strsql := Strsql || 'WHEN NVL(HOST_QTY,0) = 0 ';
+   Curr_Line := '0124';
+   Strsql := Strsql || 'THEN ';
+   Curr_Line := '0125';
+   Strsql := Strsql || '0 ';
+   Curr_Line := '0126';
+   Strsql := Strsql || 'ELSE ';
+   Curr_Line := '0127';
+   Strsql :=
+      Strsql ||
+      'ROUND( ( DECODE( Ven_Each_Flag, ''E'', ( Qty_Received * ( Host_Retail / Host_Qty ) ), Qty_Received * ( Host_Pack * ( Host_Retail / Host_Qty ) ) ) - ( ( NVL( Qty_Received, 0 ) * ( NVL( Pay_Cost, 0 ) - NVL( Pay_Allow, 0 ) - NVL( Pay_Allow2, 0 ) ) ) ) ) / DECODE( DECODE( Ven_Each_Flag, ''E'', ( Qty_Received * ( Host_Retail / Host_Qty ) ), Qty_Received * ( Host_Pack * ( Host_Retail / Host_Qty ) ) ), 0, 1, DECODE( Ven_Each_Flag, ''E'', ( Qty_Received * ( Host_Retail / Host_Qty ) ), Qty_Received * ( Host_Pack * ( Host_Retail / Host_Qty ) ) ) ) ';
+   Curr_Line := '0128';
+   Strsql := Strsql || ',2 ) ';
+   Curr_Line := '0129';
+   Strsql := Strsql || 'END Receiving_Gp_Pct ';
+   Curr_Line := '0130';
+   Strsql := Strsql || ',H.File_Process_Date ';
+   Curr_Line := '0131';
+   Strsql :=
+      Strsql || 'FROM Workspace.Dsd_Invoice_Detail_Hist PARTITION(' || 'P' ||
+      TO_CHAR
+      (                                                                       TRUNC ( SYSDATE ) + In_Date_Offset
+      , 'YYYYMM' ) || ') D ';
+   Curr_Line := '0132';
+   Strsql :=
+      Strsql || ',Workspace.Dsd_Invoice_Summary_Hist PARTITION(' || 'P' ||
+      TO_CHAR                                                              ( TRUNC ( SYSDATE ) + In_Date_Offset
+      , 'YYYYMM' ) || ') H ';
+   Curr_Line := '0133';
+   Strsql := Strsql || ',Improd.Dsd_Rcvg_Type_Inv Rt ';
+   Curr_Line := '0134';
+   Strsql := Strsql || ',Sysadm.Ps_Vendor P ';
+   Curr_Line := '0135';
+   Strsql := Strsql || ',Item_Maint_Tbl ';
+   Curr_Line := '0136';
+   Strsql := Strsql || 'WHERE H.Invoice = D.Invoice AND ';
+   Curr_Line := '0137';
+   Strsql := Strsql || 'H.STORE = D.STORE AND ';
+   Curr_Line := '0138';
+   Strsql := Strsql || 'H.Vendor = D.Vendor AND ';
+   Curr_Line := '0139';
+   Strsql := Strsql || 'H.File_Process_Date = D.File_Process_Date AND ';
+   Curr_Line := '0140';
+   Strsql := Strsql || 'H.Invoice_Date = D.Invoice_Date AND ';
+   Curr_Line := '0141';
+   Strsql := Strsql || 'H.Vendor = P.Vendor_Id AND ';
+   Curr_Line := '0142';
+   Strsql := Strsql || 'H.Type_Inv = Rt.Type_Inv AND ';
+   Curr_Line := '0143';
+   Strsql :=
+      Strsql || 'H.File_Process_Date = TRUNC( SYSDATE ) + ' ||
+      In_Date_Offset || ' AND ';
+   Curr_Line := '0044';
+   Strsql := Strsql || 'D.Upc = Item_Maint_Tbl.Upc(+) ';
+   Strsql := Strsql || ' ORDER BY H.Invoice, H.Store,D.Upc';
+   Curr_Line := '0145';
+
+   IF Improd.Dbg.Debugging_Level = 0 OR
+      Improd.Dbg.Logdebugging_Level = 0
+   THEN
+      Curr_Line := '0146';
+      Improd.Dbg.Disp ( 0, 'strsql: ' || Strsql );
+      Curr_Line := '0147';
+      RAISE SELF_IS_NULL;  --Debug 0 causes this to drop out and JUST display the string.  Does nothing. 
+   END IF;
+
+   Improd.Dbg.Logenab ( 49, 49 );
+   Improd.Dbg.Set_Logdir ( 'ORDER_ENTRY' );
+   Improd.Dbg.Set_Logfile ( 'bam_18_hist.log' );
+   Improd.Dbg.Log_Overwrite;
+   Curr_Line := '0148';
+
+   OPEN Dsd_Csr FOR Strsql;
+
+   Curr_Line := '0149';
+
+   LOOP
+
+      Curr_Line := '0150';
+
+      FETCH Dsd_Csr
+         INTO Dsd_Invoice
+             ,Dsd_Inv_Dlvry_Ret_Flag
+             ,Dsd_Store
+             ,Dsd_Vendor
+             ,Dsd_Vendor_Name_Short
+             ,Dsd_Invoice_Date
+             ,Dsd_Upc
+             ,Dsd_Upc_Id
+             ,Dsd_Sequence_Number
+             ,Dsd_Base_Qty
+             ,Dsd_Base_Cost
+             ,Dsd_Base_Price
+             ,Dsd_Final_Cost
+             ,Dsd_Final_Price
+             ,Dsd_Qty_Ret
+             ,Dsd_Qty_Rec
+             ,Dsd_Tot_Deposit
+             ,Dsd_Misc_Debit
+             ,Dsd_Misc_Credit
+             ,Dsd_Recvr_Id
+             ,Dsd_Ap_Hold
+             ,Dsd_Inv_Type
+             ,Dsd_Inv_Type_Descr
+             ,Dsd_Date_Recv
+             ,Dsd_Type_Inv
+             ,Dsd_Cod_Flag
+             ,Dsd_Check_Number
+             ,Dsd_Po_Number
+             ,Dsd_Qty_Received
+             ,Dsd_Vendor_Cost
+             ,Dsd_Host_Cost
+             ,Dsd_Pay_Cost
+             ,Dsd_Vendor_Allow
+             ,Dsd_Host_Allow
+             ,Dsd_Pay_Allow
+             ,Dsd_Vendor_Allow2
+             ,Dsd_Host_Allow2
+             ,Dsd_Pay_Allow2
+             ,Dsd_Vendor_Qty
+             ,Dsd_Vendor_Retail
+             ,Dsd_Host_Qty
+             ,Dsd_Host_Retail
+             ,Dsd_Pay_Qty
+             ,Dsd_Pay_Retail
+             ,Dsd_Return_Flag
+             ,Dsd_Vend_Each_Flag
+             ,Dsd_Deposit
+             ,Dsd_Ven_Pack
+             ,Dsd_Update_Id
+             ,Dsd_Update_Date
+             ,Dsd_Department
+             ,Dsd_Section
+             ,Dsd_Whse_Flag
+             ,Dsd_Host_Pack
+             ,Dsd_Unauth_Flag
+             ,Dsd_Host_Vendor
+             ,Dsd_Bottle_Surcharge
+             ,Dsd_Descrepancy_Flag
+             ,Dsd_Product_Description
+             ,Dsd_Account
+             ,Dsd_Qty_Diff
+             ,Dsd_Net_Cost_Paid
+             ,Dsd_Total_Amount_Paid
+             ,Dsd_Smi_Net_Cost
+             ,Dsd_Vendor_Net_Cost
+             ,Dsd_Net_Cost_Variance
+             ,Dsd_Cost_Diff
+             ,Dsd_Total_Retail
+             ,Dsd_Receiving_Gp_Pct
+             ,Dsd_File_Process_Date;
+
+      Curr_Line := '0151';
+      EXIT WHEN Dsd_Csr%NOTFOUND;
+
+      IF  Hold_Invoice IS NULL OR
+         Hold_Invoice <> Dsd_Invoice
+      THEN
+         IF Improd.Dbg.Debugging_Level = 0 OR
+            Improd.Dbg.Logdebugging_Level = 0
+         THEN
+            Display_Input_Record;
+         END IF;
+         Hold_Invoice := Dsd_Invoice;
+      END IF;
+
+      Curr_Line := '0152';
+              CASE ( TRUE )
+                  WHEN Partition01_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0153';
+                      Partition01_Count := Partition01_Count + 1;
+                  WHEN Partition02_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0154';
+                      Partition02_Count := Partition02_Count + 1;
+                  WHEN Partition03_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0155';
+                      Partition03_Count := Partition03_Count + 1;
+                  WHEN Partition04_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0156';
+                      Partition04_Count := Partition04_Count + 1;
+                  WHEN Partition05_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0157';
+                      Partition05_Count := Partition05_Count + 1;
+                  WHEN Partition06_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0158';
+                      Partition06_Count := Partition06_Count + 1;
+                  WHEN Partition07_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0159';
+                      Partition07_Count := Partition07_Count + 1;
+                  WHEN Partition08_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0160';
+                      Partition08_Count := Partition08_Count + 1;
+                  WHEN Partition09_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0161';
+                      Partition09_Count := Partition09_Count + 1;
+                  WHEN Partition10_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0162';
+                      Partition10_Count := Partition10_Count + 1;
+                  WHEN Partition11_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0163';
+                      Partition11_Count := Partition11_Count + 1;
+                  WHEN Partition12_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0164';
+                      Partition12_Count := Partition12_Count + 1;
+                  WHEN Partition13_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0165';
+                      Partition13_Count := Partition13_Count + 1;
+                  WHEN Partition14_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0166';
+                      Partition14_Count := Partition14_Count + 1;
+                  WHEN Partition15_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0167';
+                      Partition15_Count := Partition15_Count + 1;
+                  WHEN Partition16_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0168';
+                      Partition16_Count := Partition16_Count + 1;
+                  WHEN Partition17_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0169';
+                      Partition17_Count := Partition17_Count + 1;
+                  WHEN Partition18_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0170';
+                      Partition18_Count := Partition18_Count + 1;
+                  WHEN Partition19_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0171';
+                      Partition19_Count := Partition19_Count + 1;
+                  WHEN Partition20_Name =
+                           'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' )
+                  THEN
+                                                                                      Curr_Line := '0172';
+                      Partition20_Count := Partition20_Count + 1;
+                  ELSE
+                      CONTINUE;
+              END CASE;
+
+                                                                                      Curr_Line := '0173';
+              Insert_Count := NVL ( Insert_Count, 0 ) + 1;
+
+              --/*
+                                                                                      Curr_Line := '0174';
+              IF Dsd_Section IS NULL AND Dsd_Upc_Id <> 0
+              THEN
+
+                                                                                      Curr_Line := '0175';
+                  SELECT Section
+                    INTO Dsd_Section
+                    FROM Improd.Upc_Id_Attributes/*@Itemprodselect_Link*/
+                   WHERE Upc_Id = Dsd_Upc_Id;
+
+              END IF;
+
+                                                                                      Curr_Line := '0176';
+              IF Dsd_Upc_Id = 0
+              THEN
+
+                                                                                      Curr_Line := '0177';
+                BEGIN
+            SELECT Upc_Id
+                  ,Section
+                  ,Product_Description
+              INTO Dsd_Upc_Id
+                  ,Dsd_Section
+                  ,Dsd_Product_Description
+                        FROM Item_Mvmt.Product@Biwhsselect_Link.World
+                       WHERE Upc = Dsd_Upc;
+                  EXCEPTION
+                      WHEN NO_DATA_FOUND
+                      THEN
+                          NULL;
+                  END;
+                                                                                      Curr_Line := '0178';
+
+              END IF;
+              --Change 1.0 Check to see if this invoice already exists in 18 month. Inserted today
+              BEGIN
+                 --Improd.Dbg.Enab ( 99 );
+
+                                                                                      Curr_Line := '0179';
+                 Sql_String := ' select count(*) ';
+                 Sql_String :=
+                    Sql_String ||
+                    '  from Workspace.Dsd_Invoice_18_Mnth_History PARTITION (';
+                 Sql_String := Sql_String || 'P' || TO_CHAR ( Dsd_Invoice_Date, 'YYYYMM' ) || ')';
+                 Sql_String := Sql_String || ' where invoice = ''' || Dsd_Invoice || '''';
+                 Sql_String := Sql_String || '   and store = ' || Dsd_Store;
+                 Sql_String := Sql_String || ' and sequence_number = ' || Dsd_Sequence_Number;
+                 Sql_String := Sql_String || ' and upc_Id = ' || NVL(Dsd_Upc_id,0);
+                 Sql_String := Sql_String || '   and file_process_date = trunc(sysdate)';
+
+                                                                                      Curr_Line := '0180';
+                 EXECUTE IMMEDIATE Sql_String INTO V_Alreadythere;
+
+                                                                                      Curr_Line := '0181';
+                 Improd.Dbg.Disp ( 0, Sql_String );
+                 Improd.Dbg.Disp ( 0, 'V_AlreadyThere: ' || V_Alreadythere );
+                 -- BTW - A select count(*) will not return a NO_DATA_FOUND exception, it just returns 0
+              EXCEPTION
+                 WHEN NO_DATA_FOUND
+                 THEN
+                    V_Alreadythere := 0;
+                    NULL;
+              END;
+                                                                                      Curr_Line := '0182';
+              if V_AlreadyThere < 1 then  --1.0 if added.
+
+                                                                                      Curr_Line := '0183';
+              INSERT INTO Workspace.Dsd_Invoice_18_Mnth_History
+                   VALUES
+                          (
+                              Dsd_Invoice
+                             ,Dsd_Inv_Dlvry_Ret_Flag
+                             ,Dsd_Store
+                             ,Dsd_Vendor
+                             ,Dsd_Vendor_Name_Short
+                             ,Dsd_Invoice_Date
+                             ,Dsd_Upc
+                             ,Dsd_Upc_Id
+                             ,Dsd_Sequence_Number
+                             ,Dsd_Base_Qty
+                             ,Dsd_Base_Cost
+                             ,Dsd_Base_Price
+                             ,Dsd_Final_Cost
+                             ,Dsd_Final_Price
+                             ,Dsd_Qty_Ret
+                             ,Dsd_Qty_Rec
+                             ,Dsd_Tot_Deposit
+                             ,Dsd_Misc_Debit
+                             ,Dsd_Misc_Credit
+                             ,Dsd_Recvr_Id
+                             ,Dsd_Ap_Hold
+                             ,Dsd_Inv_Type
+                             ,Dsd_Inv_Type_Descr
+                             ,Dsd_Date_Recv
+                             ,Dsd_Type_Inv
+                             ,Dsd_Cod_Flag
+                             ,Dsd_Check_Number
+                             ,Dsd_Po_Number
+                             ,Dsd_Qty_Received
+                             ,Dsd_Vendor_Cost
+                             ,Dsd_Host_Cost
+                             ,Dsd_Pay_Cost
+                             ,Dsd_Vendor_Allow
+                             ,Dsd_Host_Allow
+                             ,Dsd_Pay_Allow
+                             ,Dsd_Vendor_Allow2
+                             ,Dsd_Host_Allow2
+                             ,Dsd_Pay_Allow2
+                             ,Dsd_Vendor_Qty
+                             ,Dsd_Vendor_Retail
+                             ,Dsd_Host_Qty
+                             ,Dsd_Host_Retail
+                             ,Dsd_Pay_Qty
+                             ,Dsd_Pay_Retail
+                             ,Dsd_Return_Flag
+                             ,Dsd_Vend_Each_Flag
+                             ,Dsd_Deposit
+                             ,Dsd_Ven_Pack
+                             ,Dsd_Update_Id
+                             ,Dsd_Update_Date
+                             ,Dsd_Department
+                             ,Dsd_Section
+                             ,Dsd_Whse_Flag
+                             ,Dsd_Host_Pack
+                             ,Dsd_Unauth_Flag
+                             ,Dsd_Host_Vendor
+                             ,Dsd_Bottle_Surcharge
+                             ,Dsd_Descrepancy_Flag
+                             ,Dsd_Product_Description
+                             ,Dsd_Account
+                             ,Dsd_Qty_Diff
+                             ,Dsd_Net_Cost_Paid
+                             ,Dsd_Total_Amount_Paid
+                             ,Dsd_Smi_Net_Cost
+                             ,Dsd_Vendor_Net_Cost
+                             ,Dsd_Net_Cost_Variance
+                             ,Dsd_Cost_Diff
+                             ,Dsd_Total_Retail
+                             ,Dsd_Receiving_Gp_Pct
+                             ,Dsd_File_Process_Date
+                          );
+                  end if; --1.0
+          --*/
+      Curr_Line := '0184';
+   END LOOP;
+   Improd.Dbg.Disp ( 99, 'Records Inserted INTO DSD_INVOICE_18_MNTH_HISTORY BY PARTITION:' );
+   Improd.Dbg.Disp ( 99, Partition01_Name || ': ' || TO_CHAR ( Partition01_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition02_Name || ': ' || TO_CHAR ( Partition02_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition03_Name || ': ' || TO_CHAR ( Partition03_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition04_Name || ': ' || TO_CHAR ( Partition04_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition05_Name || ': ' || TO_CHAR ( Partition05_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition06_Name || ': ' || TO_CHAR ( Partition06_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition07_Name || ': ' || TO_CHAR ( Partition07_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition08_Name || ': ' || TO_CHAR ( Partition08_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition09_Name || ': ' || TO_CHAR ( Partition09_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition10_Name || ': ' || TO_CHAR ( Partition10_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition11_Name || ': ' || TO_CHAR ( Partition11_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition12_Name || ': ' || TO_CHAR ( Partition12_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition13_Name || ': ' || TO_CHAR ( Partition13_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition14_Name || ': ' || TO_CHAR ( Partition14_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition15_Name || ': ' || TO_CHAR ( Partition15_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition16_Name || ': ' || TO_CHAR ( Partition16_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition17_Name || ': ' || TO_CHAR ( Partition17_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition18_Name || ': ' || TO_CHAR ( Partition18_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition19_Name || ': ' || TO_CHAR ( Partition19_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, Partition20_Name || ': ' || TO_CHAR ( Partition20_Count, '999,999,999' ) );
+   Improd.Dbg.Disp ( 99, 'Total Records Inserted: ' || TO_CHAR ( Insert_Count, '999,999,999' ) );
+
+   IF Partition01_Count = 0 AND
+      Partition02_Count = 0 AND
+      Partition03_Count = 0 AND
+      Partition04_Count = 0 AND
+      Partition05_Count = 0 AND
+      Partition06_Count = 0 AND
+      Partition07_Count = 0 AND
+      Partition08_Count = 0 AND
+      Partition09_Count = 0 AND
+      Partition10_Count = 0 AND
+      Partition11_Count = 0 AND
+      Partition12_Count = 0 AND
+      Partition13_Count = 0 AND
+      Partition14_Count = 0 AND
+      Partition15_Count = 0 AND
+      Partition16_Count = 0 AND
+      Partition17_Count = 0 AND
+      Partition18_Count = 0 AND
+      Partition19_Count = 0 AND
+      Partition20_Count = 0
+   THEN
+      RAISE NO_DATA_FOUND;
+   END IF;
+
+   COMMIT;
+   Improd.Dbg.Disp ( 99, 'Ending Dsd_Inv_All_Hist_Sync' );
+   FixUPC_ID_For_UNFI_In_18_Month;                                                  --change 1.0
+EXCEPTION
+   WHEN NO_DATA_FOUND
+   THEN
+      NULL;
+   WHEN OTHERS
+   THEN
+      Improd.Dbg.Disp ( 99, 'Sql_String: ' || Sql_String );
+      Improd.Dbg.Disp ( 99, 'Curr_Line: ' || Curr_Line );
+      ROLLBACK;
+      RAISE;
+END;
+/
